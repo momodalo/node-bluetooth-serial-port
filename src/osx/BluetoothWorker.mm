@@ -18,6 +18,13 @@
 #define RFCOMM_UUID 0x0003
 #endif
 
+unsigned char gKIPClassUUID[] =
+{
+    0x8c, 0xe2, 0x55, 0xc0, 0x20, 0x0a, 0x11, 0xe0,
+    0xac, 0x64, 0x08, 0x00, 0x20, 0x0c, 0x9a, 0x66
+};
+
+
 using namespace node;
 using namespace v8;
 
@@ -50,6 +57,8 @@ using namespace v8;
 
 /** Class that is handling all the Bluetooth work */
 @implementation BluetoothWorker
+
+
 
 /** The BluetoothWorker class is a singleton. An instance can be obtained using this method */
 + (id)getInstance
@@ -236,32 +245,59 @@ using namespace v8;
 - (void) getRFCOMMChannelIDTask: (NSString *) address
 {
     IOBluetoothDevice *device = [IOBluetoothDevice deviceWithAddressString:address];
-    IOBluetoothSDPUUID *uuid = [[IOBluetoothSDPUUID alloc] initWithUUID16:RFCOMM_UUID];
+    IOBluetoothSDPUUID *uuid = [IOBluetoothSDPUUID uuidWithBytes:gKIPClassUUID length:16];
     NSArray *uuids = [NSArray arrayWithObject:uuid];
+
+    if( [device openConnection:self  withPageTimeout:100000 authenticationRequired:YES] != kIOReturnSuccess ){
+        NSLog( @"Error - can't connect.  ***This should never happen.***\n" );
+        return;
+    }
 
     // always perform a new SDP query
     NSDate *lastServicesUpdate = [device getLastServicesUpdate];
     NSDate *currentServiceUpdate = NULL;
 
     // only search for the UUIDs we are going to need...
-    [device performSDPQuery: NULL uuids: uuids];
+    //[device performSDPQuery: NULL uuids: uuids];
+    if( [device performSDPQuery:uuid] != kIOReturnSuccess ){
+        NSLog( @"Error - perform SDP Query.  ***This should never happen.***\n" );
+        return;
+    }
 
-    int counter = 0;
     bool stop = false;
 
+    NSTimeInterval endtime = [[NSDate date] timeIntervalSince1970] + 30;
+    IOBluetoothSDPServiceRecord *record;
     // if needed wait for a while for the sdp update
-    while (!stop && counter < 60) { // wait no more than 60 seconds for SDP update
+    while (!stop && [[NSDate date] timeIntervalSince1970] < endtime) { // wait no more than 60 seconds for SDP update
         currentServiceUpdate = [device getLastServicesUpdate];
 
         if (currentServiceUpdate != NULL && [currentServiceUpdate laterDate: lastServicesUpdate]) {
-            stop = true;
+            record = [device getServiceRecordForUUID:uuid];
+            if(record != nil)
+                stop = true;
         } else {
             sleep(1);
         }
-
-        counter++;
     }
 
+    if(record == nil) {
+        NSLog( @"Error - no record\n" );
+        lastChannelID = -1;
+        return;
+    }
+
+    UInt8 channelID;
+    IOReturn status = [record getRFCOMMChannelID:&channelID];
+
+    if(status != kIOReturnSuccess) {
+        NSLog( @"Error - no rfcomm channel id \n" );
+        lastChannelID = -1;
+        return;
+    }
+
+    lastChannelID = channelID;
+    /*
     NSArray *services = [device services];
     
     // if there are services check if it is the one we are looking for.
@@ -281,6 +317,7 @@ using namespace v8;
 
     // This can happen is some conditions where the network is unreliable. Just ignore for now...
     lastChannelID = -1;
+    */
 }
 
 /** Called when data is received from a remote device */
